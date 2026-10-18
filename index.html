@@ -465,6 +465,7 @@
 <script>
 // --- GAME STATE ---
 const G = {
+  activeTab: 'hunt',
   cash: 150,
   xp: 0,
   level: 1,
@@ -605,13 +606,14 @@ function recordCodex(item) {
 // --- XP & LEVEL SYSTEM ---
 function awardXP(amount) {
   G.xp += amount;
-  const needed = G.level * 100;
-  if (G.xp >= needed) {
+  let needed = G.level * 100;
+  while (G.xp >= needed) {
     G.xp -= needed;
     G.level++;
     G.skillPoints++;
     log(`LEVEL UP! You are now Level ${G.level} Field Scout. Gained 1 Skill Point!`, 'log-gold');
     checkUnlocks();
+    needed = G.level * 100;
   }
   updateUI();
 }
@@ -701,6 +703,8 @@ function renderVault() {
   container.innerHTML = '';
 
   let totalVal = 0;
+  const coaCost = Math.max(15, 30 - G.skills.barter * 5);
+
   G.inventory.forEach((item, idx) => {
     totalVal += item.value;
     const card = document.createElement('div');
@@ -721,7 +725,7 @@ function renderVault() {
       <div style="margin-top:10px; display:flex; justify-content:space-between; align-items:center;">
         <span class="item-valuation">$${item.value.toLocaleString()}</span>
         <div style="display:flex; gap:6px;">
-          ${!item.authenticated && !item.isGrail ? `<button class="journal-btn" onclick="authenticateItem(${idx})" style="font-size:0.7rem;">COA ($30)</button>` : ''}
+          ${!item.authenticated && !item.isGrail ? `<button class="journal-btn" onclick="authenticateItem(${idx})" style="font-size:0.7rem;">COA ($${coaCost})</button>` : ''}
           <button class="journal-btn" onclick="sellVaultItem(${idx})" style="font-size:0.7rem;">Sell</button>
         </div>
       </div>
@@ -768,6 +772,7 @@ function authenticateItem(idx) {
 // --- POINT TRADE WIRE (WONDER TRADE) ---
 function renderTradeSelect() {
   const sel = document.getElementById('trade-select');
+  const prevVal = sel.value;
   sel.innerHTML = '<option value="">-- Select Point to Consign --</option>';
   G.inventory.forEach(item => {
     const opt = document.createElement('option');
@@ -775,6 +780,7 @@ function renderTradeSelect() {
     opt.textContent = `${item.title} ($${item.value.toLocaleString()})`;
     sel.appendChild(opt);
   });
+  sel.value = prevVal;
 }
 
 function initiateTrade() {
@@ -807,11 +813,14 @@ function initiateTrade() {
   G.trades.push(tradeObj);
   log(`Consignment dispatched: ${consigned.title} placed in postal transit.`, 'log-gold');
   updateUI();
+  renderTradeSlots();
 }
 
 setInterval(() => {
-  G.trades.forEach(t => t.progress++);
-  renderTradeSlots();
+  if (G.trades.length > 0) {
+    G.trades.forEach(t => t.progress++);
+    renderTradeSlots();
+  }
 }, 1000);
 
 function renderTradeSlots() {
@@ -882,6 +891,7 @@ function claimTrade(idx) {
 
   G.inventory.push(item);
   updateUI();
+  renderTradeSlots();
 }
 
 // --- AUCTIONS (EASY WINS & FLIPS) ---
@@ -1021,7 +1031,7 @@ function upgradeSkill(key) {
 function getSavePayload() {
   return JSON.stringify({
     title: "Ancient Again... Lithic Collector Save",
-    version: 1.1,
+    version: 1.2,
     savedAt: new Date().toISOString(),
     cash: G.cash,
     xp: G.xp,
@@ -1030,7 +1040,9 @@ function getSavePayload() {
     region: G.region,
     inventory: G.inventory,
     skills: G.skills,
-    codex: G.codex
+    codex: G.codex,
+    combBag: G.combBag,
+    trades: G.trades
   }, null, 2);
 }
 
@@ -1068,6 +1080,8 @@ function applyLoadedData(parsed) {
   G.inventory = parsed.inventory ?? [];
   G.skills = parsed.skills ?? G.skills;
   G.codex = parsed.codex ?? {};
+  G.combBag = parsed.combBag ?? [];
+  G.trades = parsed.trades ?? [];
 
   G.maxCombBag = 10 + (G.skills.fieldComb * 3);
   if (G.skills.courier >= 2) G.maxTradeSlots = 2;
@@ -1076,6 +1090,8 @@ function applyLoadedData(parsed) {
   changeRegion();
   checkUnlocks();
   updateUI();
+  updateCombStatus();
+  renderTradeSlots();
 }
 
 function handleFileImport(event) {
@@ -1132,7 +1148,9 @@ function saveGame() {
     region: G.region,
     inventory: G.inventory,
     skills: G.skills,
-    codex: G.codex
+    codex: G.codex,
+    combBag: G.combBag,
+    trades: G.trades
   };
   localStorage.setItem('ancient_again_save', JSON.stringify(saveObj));
 }
@@ -1151,6 +1169,7 @@ function loadGame() {
 
 // --- NAVIGATION & TABS ---
 function showTab(tabName) {
+  G.activeTab = tabName;
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(`tab-${tabName}`).classList.add('active');
@@ -1159,10 +1178,14 @@ function showTab(tabName) {
   const idx = tabs.indexOf(tabName);
   if (idx >= 0) document.querySelectorAll('.tab-btn')[idx].classList.add('active');
 
-  if (tabName === 'vault') renderVault();
-  if (tabName === 'trade') renderTradeSelect();
-  if (tabName === 'codex') renderCodex();
-  if (tabName === 'skills') renderSkills();
+  renderActivePanel();
+}
+
+function renderActivePanel() {
+  if (G.activeTab === 'vault') renderVault();
+  if (G.activeTab === 'trade') renderTradeSelect();
+  if (G.activeTab === 'codex') renderCodex();
+  if (G.activeTab === 'skills') renderSkills();
 }
 
 function changeRegion() {
@@ -1190,6 +1213,7 @@ function updateUI() {
   document.getElementById('disp-xp-fill').style.width = pct + '%';
   document.getElementById('disp-vault-count').textContent = G.inventory.length;
 
+  renderActivePanel();
   saveGame();
 }
 
